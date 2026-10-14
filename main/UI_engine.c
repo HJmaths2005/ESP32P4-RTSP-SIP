@@ -661,7 +661,7 @@ esp_log_level_set("MEDIA_LIB", ESP_LOG_VERBOSE);
         lv_label_set_text(s_voice_status, "Configure your SIP account in settings."); return;
     }
     if (rtc_handler) {
-        if (!/*sip_service_registered()*/ 1 && sip_service_last_event() == ESP_RTC_EVENT_ERROR) {
+        if (!sip_service_registered() && sip_service_last_event() == ESP_RTC_EVENT_ERROR) {
             if (sip_service_stop(rtc_handler) != ESP_OK) {
                 ESP_LOGE(TAG,"not being registered");
                 lv_label_set_text(s_voice_status, "Registration could not reset; try again.");

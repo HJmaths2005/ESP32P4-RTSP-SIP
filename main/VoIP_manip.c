@@ -48,8 +48,9 @@ int _esp_sip_event_handler(esp_rtc_event_t event, void *ctx)
 {
     atomic_store(&s_last_event, event);
     switch (event) {
-        case ESP_RTC_EVENT_REGISTERED: atomic_store(&s_registered, true); 
-        // ESP_LOGE(TAG,"user has been registered");break;
+        case ESP_RTC_EVENT_REGISTERED:
+            atomic_store(&s_registered, true);
+            break;
         case ESP_RTC_EVENT_UNREGISTERED: atomic_store(&s_registered, false); break;
         case ESP_RTC_EVENT_CALLING: atomic_store(&s_in_call, true); break;
         case ESP_RTC_EVENT_INCOMING:

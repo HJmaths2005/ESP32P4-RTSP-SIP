@@ -27,6 +27,7 @@ idf_component_register(SRCS
         esp_hosted
         esp_wifi_remote
         esp_peripherals
+        espressif__esp_media_protocols
         esp_driver_cam
         esp_driver_isp
         esp_driver_ppa
@@ -41,3 +42,9 @@ idf_component_register(SRCS
 # Compatibility fix for FU-A SDP in the prebuilt ADF RTSP server.
 #   target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf")
 # endif()
+
+# The standalone protocol component owns both headers and the prebuilt library.
+# ADF exposes a different esp_rtc_config_t layout when its copy is enabled.
+if(CONFIG_MEDIA_PROTOCOL_LIB_ENABLE)
+    message(FATAL_ERROR "Disable CONFIG_MEDIA_PROTOCOL_LIB_ENABLE in menuconfig; this project uses espressif/esp_media_protocols from the component registry.")
+endif()

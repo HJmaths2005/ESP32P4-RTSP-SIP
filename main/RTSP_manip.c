@@ -23,6 +23,7 @@
  */
 
 #include "RTSP_manip.h"
+#include "WIFI_manip.h"
 
 static const char *TAG = "RTSP_SERVICE";
 extern volatile uint32_t s_jpeg_seq;
@@ -69,11 +70,10 @@ static uint32_t get_cur_pts()
     return cur_pts;
 }
 
-static char *_get_network_ip()
+static char *_get_network_ip(void)
 {
-    media_lib_ipv4_info_t ip_info;
-    media_lib_netif_get_ipv4_info(MEDIA_LIB_NET_TYPE_STA, &ip_info);
-    return media_lib_ipv4_ntoa(&ip_info.ip);
+    static char address[16];
+    return wifi_get_ip(address, sizeof(address)) ? address : NULL;
 }
 
 static int _esp_rtsp_state_handler(esp_rtsp_state_t state, void *ctx)
@@ -105,13 +105,13 @@ static int _esp_rtsp_state_handler(esp_rtsp_state_t state, void *ctx)
 
 static int _send_video(unsigned char *data, unsigned int *len, uint32_t *pts, void *ctx)
 {
-   
+    if (!data || !len || !pts || !s_frame_lock) return ESP_ERR_INVALID_ARG;
     if (xSemaphoreTake(s_frame_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
         *len = 0;
         return ESP_FAIL;
     }
 
-    if (jpeg_size == 0 || s_jpeg_seq == s_last_sent_seq) {
+    if (!s_jpeg_out_buf || jpeg_size == 0 || s_jpeg_seq == s_last_sent_seq) {
         xSemaphoreGive(s_frame_lock);
         *len = 0;
         return ESP_FAIL;
@@ -128,12 +128,13 @@ static int _send_video(unsigned char *data, unsigned int *len, uint32_t *pts, vo
         return ESP_OK;
     }
 
-    /* CSI/ISP wrote this buffer via DMA, bypassing the CPU cache.
-     * Invalidate before reading, or the memcpy can pick up stale
-     * cache lines from a previous frame. */
-    esp_cache_msync(s_jpeg_out_buf, ALIGN_UP(n, 64),
-                    ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-
+    /* The producer writes back CPU-written bytes before publishing this frame.
+       It is now safe to discard the reader's old cache lines on either core. */
+    if (esp_cache_msync(s_jpeg_out_buf, ALIGN_UP(n, 64), ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK) {
+        xSemaphoreGive(s_frame_lock);
+        *len = 0;
+        return ESP_FAIL;
+    }
     memcpy(data, s_jpeg_out_buf, n);
 
     s_last_sent_seq = s_jpeg_seq;
@@ -161,13 +162,18 @@ esp_rtsp_handle_t rtsp_service_start(esp_rtsp_mode_t mode, const char *uri)
 {
     media_lib_add_default_adapter();
 
-    uint16_t width = 480, height = 640;
+    if (!uri || !wifi_is_connected()) return NULL;
+    char *address = _get_network_ip();
+    if (!address) return NULL;
+    s_last_sent_seq = 0;
+    stream_first_pts = 0;
+    uint16_t width = CAMERA_H_RES, height = CAMERA_V_RES;
     esp_rtsp_video_info_t vcodec_info = {
-        .vcodec = use_h264 ? RTSP_VCODEC_H264: RTSP_VCODEC_MJPEG,
+        .vcodec = camera_uses_h264() ? RTSP_VCODEC_H264 : RTSP_VCODEC_MJPEG,
         .width = width,
         .height = height,
-        .fps = use_h264? 30 : 35,
-        .len = 256*1024,
+        .fps = 30,
+        .len = JPEG_BUF_SIZE,
     };
     esp_rtsp_data_cb_t data_cb = {
         .send_video = _send_video,
@@ -181,7 +187,7 @@ esp_rtsp_handle_t rtsp_service_start(esp_rtsp_mode_t mode, const char *uri)
         .video_enable = true,
         .acodec = RTSP_ACODEC_G711A,
         .video_info = &vcodec_info,
-        .local_addr = _get_network_ip(),
+        .local_addr = address,
         .local_port = RTSP_SERVER_PORT,
         .stack_size = RTSP_STACK_SZIE,
         .task_prio = RTSP_TASK_PRIO,
@@ -208,14 +214,9 @@ esp_rtsp_handle_t rtsp_service_start(esp_rtsp_mode_t mode, const char *uri)
     return ESP_OK;
 }
 
-int rtsp_service_stop(esp_rtsp_handle_t esp_rtsp)
+int rtsp_service_stop(esp_rtsp_handle_t handle)
 {
-    if (esp_rtsp) {
-        if (rtsp_mode == RTSP_SERVER) {
-            esp_rtsp_server_stop(esp_rtsp);
-        } else {
-            esp_rtsp_client_stop(esp_rtsp);
-        }
-    }
-    return ESP_FAIL;
+    if (!handle) return ESP_ERR_INVALID_ARG;
+    return rtsp_mode == RTSP_SERVER ? esp_rtsp_server_stop(handle)
+                                    : esp_rtsp_client_stop(handle);
 }

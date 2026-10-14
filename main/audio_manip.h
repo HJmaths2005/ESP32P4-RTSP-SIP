@@ -17,6 +17,8 @@ extern esp_codec_dev_handle_t g_codec_dev;
  * @return ESP_OK on success
  */
 esp_err_t audio_codec_init(int sample_rate);
+/* Call only after SIP has stopped its callbacks. */
+void audio_codec_deinit(void);
 
 /* Convenience wrappers */
 int audio_read_mic(void *data, int len);

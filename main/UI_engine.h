@@ -11,7 +11,7 @@
 #define UI_BUTTON_BOTTOM_BG_COLOR lv_color_hex(0x1A2037)
 #define UI_SCREEN_BG_COLOR lv_color_hex(0x0B1120)
 #define UI_BUTTON_BORDER_COLOR lv_color_hex(0x3A4DFF)
-#define UI_TEXT_COLOR lv_color_hex(0x00D9FF)
+#define UI_TEXT_COLOR lv_color_hex(0xF3F7FC)
 //0x164678
 //0x0A2037 this is some unique ones the upper border fades
 // #define UI_BUTTON_TOP_BG_COLOR lv_color_hex(0x011178)
@@ -20,7 +20,6 @@
 
 void ui_settings_page(void);
 void settings_clicked_cb(lv_event_t *e);
-static void settings_save_cb(lv_event_t *e);
 
 void ui_voice_call_page(void);
 void voice_call_clicked_cb(lv_event_t *e);   /* from main page, opens the dial page */

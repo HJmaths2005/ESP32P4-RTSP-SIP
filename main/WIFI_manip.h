@@ -19,11 +19,7 @@
 #include"esp_err.h"
 
 
-/*
 
-#define CONFIG_WIFI_SSID "Galaxy A55 5G C4E2"
-#define CONFIG_WIFI_PASS "H1a3m8i4"
-*/
 
 
 
@@ -39,9 +35,9 @@ typedef void (*wifi_state_cb_t)(wifi_state_t state, const char *ip_or_null);
 
 
 void wifi_init(void);
-void wifi_connect(const char *ssid, const char *password);
-void wifi_disconnect(void);
+esp_err_t wifi_connect(const char *ssid, const char *password);
+esp_err_t wifi_disconnect(void);
 void wifi_set_state_cb(wifi_state_cb_t cb);
 bool wifi_is_connected(void);
-void ping_laptop(void);
-void test_udp_sip(void);
+bool wifi_get_ip(char *out, size_t capacity);
+int test_udp(void);

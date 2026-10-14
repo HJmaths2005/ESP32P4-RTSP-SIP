@@ -9,6 +9,7 @@ idf_component_register(SRCS
     "i2c_manip.c"
     "audio_manip.c"
     "camera_manip.c"
+    "rtsp_sdp_compat.c"
     "RTSP_manip.c"
     "h264_manip.c"
     INCLUDE_DIRS "."
@@ -36,3 +37,7 @@ idf_component_register(SRCS
         
 )
 
+# if(CONFIG_APP_USE_H264)
+# Compatibility fix for FU-A SDP in the prebuilt ADF RTSP server.
+#   target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf")
+# endif()

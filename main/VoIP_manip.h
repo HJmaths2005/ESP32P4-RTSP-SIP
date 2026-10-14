@@ -1,3 +1,5 @@
+#pragma once
+#include <stdbool.h>
 #include "string.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -17,11 +19,6 @@
 #define PCM_FRAME_SAMPLES   160   /* 20 ms @ 8 kHz */
 #define PCM_FRAME_BYTES     (PCM_FRAME_SAMPLES * sizeof(int16_t))
 
-/* Scratch buffers (mono PCM) */
-static int16_t pcm_mono[PCM_FRAME_SAMPLES];
-static int16_t pcm_stereo[PCM_FRAME_SAMPLES * 2];
-
-
 // extern av_stream_handle_t av_handler;
 
 char *_get_network_ip(void);
@@ -29,3 +26,8 @@ int _esp_sip_event_handler(esp_rtc_event_t event, void *ctx);
 int _send_audio(unsigned char *data, int len, void *ctx);
 int _receive_audio(unsigned char *data, int len, void *ctx);
 esp_rtc_handle_t sip_service_start(const char *uri);
+int sip_service_stop(esp_rtc_handle_t handle);
+bool sip_service_registered(void);
+bool sip_service_in_call(void);
+bool sip_service_incoming(void);
+esp_rtc_event_t sip_service_last_event(void);

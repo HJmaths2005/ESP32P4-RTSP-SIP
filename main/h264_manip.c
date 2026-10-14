@@ -1,4 +1,5 @@
 #include "h264_manip.h"
+#include <inttypes.h>
 
 static const char *TAG = "H264_ENCODER";
 
@@ -12,16 +13,18 @@ static uint32_t s_frame_log_counter = 0;
 
 esp_err_t h264_encoder_init(uint32_t width, uint32_t height, uint32_t fps)
 {
+    if (!width || !height || !fps || width != CAMERA_H_RES || height != CAMERA_V_RES) return ESP_ERR_INVALID_ARG;
     if (s_enc) return ESP_OK;
 
     esp_h264_enc_cfg_hw_t cfg = {0};
-    cfg.gop        = fps/2;
+    /* Each frame is independent: the latest-frame publisher can drop frames. */
+    cfg.gop        = 1;
     cfg.fps        = fps;
     cfg.res.width  = width;
     cfg.res.height = height;
-    cfg.rc.bitrate = /*(width * height * fps) / 10*/500*1000;
-    cfg.rc.qp_min  = /*26*/24;
-    cfg.rc.qp_max  = /*30*/32;
+    cfg.rc.bitrate = CONFIG_APP_H264_BITRATE;
+    cfg.rc.qp_min  = 20;
+    cfg.rc.qp_max  = 40;
     cfg.pic_type   = ESP_H264_RAW_FMT_O_UYY_E_VYY;
 
     /* 1. Create the handle */
@@ -65,6 +68,7 @@ esp_err_t h264_encoder_process(const uint8_t *raw_data,
                                size_t         out_buf_size,
                                size_t        *out_len)
 {
+    if (out_len) *out_len = 0;
     if (!s_enc || !raw_data || !out_buf || !out_len) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -91,7 +95,7 @@ esp_err_t h264_encoder_process(const uint8_t *raw_data,
     /* The encoder tells us how many bytes it produced. Verify it against
      * our own scratch buffer before trusting it. */
     size_t produced = /*out_frame.raw_data.len*/out_frame.length;
-    if (produced > s_out_buf_size) {
+    if (!produced || produced > s_out_buf_size) {
         ESP_LOGE(TAG, "Encoder reported %u B > scratch %u B — refusing copy",
                  (unsigned)produced, (unsigned)s_out_buf_size);
         return ESP_FAIL;
@@ -114,7 +118,7 @@ esp_err_t h264_encoder_process(const uint8_t *raw_data,
              out_buf[4], out_buf[5], out_buf[6], out_buf[7]);
 }
 */
-    if (s_frame_log_counter < 1) {
+    if (s_frame_log_counter < 1 && produced >= 32) {
     ESP_LOGW(TAG, "frame[0] first 32 bytes:");
     ESP_LOGW(TAG, "  %02X %02X %02X %02X %02X %02X %02X %02X  %02X %02X %02X %02X %02X %02X %02X %02X",
              out_buf[0],  out_buf[1],  out_buf[2],  out_buf[3],
@@ -152,6 +156,7 @@ void h264_encoder_deinit(void)
         s_out_buf = NULL;
         s_out_buf_size = 0;
     }
+    s_frame_log_counter = 0;
     ESP_LOGI(TAG, "H.264 HW Encoder deinitialized");
 }
 

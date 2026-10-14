@@ -21,6 +21,27 @@ static i2s_chan_handle_t tx_handle = NULL;
 static i2s_chan_handle_t rx_handle = NULL;
 
 esp_codec_dev_handle_t g_codec_dev = NULL;
+static const audio_codec_ctrl_if_t *s_ctrl_if;
+static const audio_codec_data_if_t *s_data_if;
+static const audio_codec_gpio_if_t *s_gpio_if;
+static const audio_codec_if_t *s_codec_if;
+
+void audio_codec_deinit(void)
+{
+    if (g_codec_dev) {
+        esp_codec_dev_close(g_codec_dev);
+        esp_codec_dev_delete(g_codec_dev);
+        g_codec_dev = NULL;
+    }
+    if (s_codec_if) audio_codec_delete_codec_if(s_codec_if);
+    if (s_data_if) audio_codec_delete_data_if(s_data_if);
+    if (s_ctrl_if) audio_codec_delete_ctrl_if(s_ctrl_if);
+    if (s_gpio_if) audio_codec_delete_gpio_if(s_gpio_if);
+    s_codec_if = NULL; s_data_if = NULL; s_ctrl_if = NULL; s_gpio_if = NULL;
+    if (tx_handle) { i2s_channel_disable(tx_handle); i2s_del_channel(tx_handle); tx_handle = NULL; }
+    if (rx_handle) { i2s_channel_disable(rx_handle); i2s_del_channel(rx_handle); rx_handle = NULL; }
+}
+
 
 static esp_err_t i2s_driver_init(int sample_rate)
 {
@@ -55,17 +76,22 @@ static esp_err_t i2s_driver_init(int sample_rate)
 
 esp_err_t audio_codec_init(int sample_rate)
 {
+    if (g_codec_dev) return ESP_OK;
+    if (sample_rate != 8000) return ESP_ERR_INVALID_ARG;
+    esp_err_t ret = ESP_FAIL;
     /* 1. I2S */
-    ESP_RETURN_ON_ERROR(i2s_driver_init(sample_rate), TAG, "i2s init");
+    ret = i2s_driver_init(sample_rate);
+    if (ret != ESP_OK) goto fail;
 
+    ret = ESP_FAIL;
     /* 2. Reuse the I2C bus you already created for touch in i2c_manip.c */
     audio_codec_i2c_cfg_t i2c_cfg = {
         .port = I2C_NUM_0,
         .addr = ES8311_ADDR,
         .bus_handle = i2c_handle,      /* <-- shared, not new */
     };
-    const audio_codec_ctrl_if_t *ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
-    if (!ctrl_if) { ESP_LOGE(TAG, "ctrl_if alloc failed"); return ESP_FAIL; }
+    s_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    if (!s_ctrl_if) { ESP_LOGE(TAG, "ctrl_if alloc failed"); goto fail; }
 
     /* 3. Data interface */
     audio_codec_i2s_cfg_t i2s_cfg = {
@@ -73,17 +99,17 @@ esp_err_t audio_codec_init(int sample_rate)
         .rx_handle = rx_handle,
         .tx_handle = tx_handle,
     };
-    const audio_codec_data_if_t *data_if = audio_codec_new_i2s_data(&i2s_cfg);
-    if (!data_if) { ESP_LOGE(TAG, "data_if alloc failed"); return ESP_FAIL; }
+    s_data_if = audio_codec_new_i2s_data(&i2s_cfg);
+    if (!s_data_if) { ESP_LOGE(TAG, "data_if alloc failed"); goto fail; }
 
     /* 4. GPIO interface for PA */
-    const audio_codec_gpio_if_t *gpio_if = audio_codec_new_gpio();
-    if (!gpio_if) { ESP_LOGE(TAG, "gpio_if alloc failed"); return ESP_FAIL; }
+    s_gpio_if = audio_codec_new_gpio();
+    if (!s_gpio_if) { ESP_LOGE(TAG, "gpio_if alloc failed"); goto fail; }
 
     /* 5. ES8311 codec interface */
     es8311_codec_cfg_t es8311_cfg = {
-        .ctrl_if = ctrl_if,
-        .gpio_if = gpio_if,
+        .ctrl_if = s_ctrl_if,
+        .gpio_if = s_gpio_if,
         .codec_mode = ESP_CODEC_DEV_WORK_MODE_BOTH,
         .master_mode = false,
         .use_mclk = true,
@@ -95,17 +121,17 @@ esp_err_t audio_codec_init(int sample_rate)
         },
         .mclk_div = I2S_MCLK_MULTIPLE_256,
     };
-    const audio_codec_if_t *es8311_if = es8311_codec_new(&es8311_cfg);
-    if (!es8311_if) { ESP_LOGE(TAG, "es8311_if alloc failed"); return ESP_FAIL; }
+    s_codec_if = es8311_codec_new(&es8311_cfg);
+    if (!s_codec_if) { ESP_LOGE(TAG, "es8311_if alloc failed"); goto fail; }
 
     /* 6. Top-level codec device */
     esp_codec_dev_cfg_t dev_cfg = {
         .dev_type = ESP_CODEC_DEV_TYPE_IN_OUT,
-        .codec_if = es8311_if,
-        .data_if = data_if,
+        .codec_if = s_codec_if,
+        .data_if = s_data_if,
     };
     g_codec_dev = esp_codec_dev_new(&dev_cfg);
-    if (!g_codec_dev) { ESP_LOGE(TAG, "codec dev alloc failed"); return ESP_FAIL; }
+    if (!g_codec_dev) { ESP_LOGE(TAG, "codec dev alloc failed"); goto fail; }
 
     /* 7. Open with the requested sample config */
     esp_codec_dev_sample_info_t sample_cfg = {
@@ -116,7 +142,7 @@ esp_err_t audio_codec_init(int sample_rate)
     };
     if (esp_codec_dev_open(g_codec_dev, &sample_cfg) != ESP_CODEC_DEV_OK) {
         ESP_LOGE(TAG, "esp_codec_dev_open failed");
-        return ESP_FAIL;
+        goto fail;
     }
 
     esp_codec_dev_set_out_vol(g_codec_dev, 100);
@@ -127,28 +153,22 @@ esp_err_t audio_codec_init(int sample_rate)
 
     ESP_LOGI(TAG, "ES8311 codec ready @ %d Hz", sample_rate);
     return ESP_OK;
+fail:
+    audio_codec_deinit();
+    return ret;
 }
 
 /* Helpers used by VoIP_manip.c */
 int audio_read_mic(void *data, int len)
 {
-    if (!g_codec_dev) return -1;
+    if (!g_codec_dev || !data || len <= 0) return ESP_CODEC_DEV_INVALID_ARG;
     return esp_codec_dev_read(g_codec_dev, data, len);
 }
 
 int audio_write_spk(const void *data, int len)
 {
-    if (!g_codec_dev) return -1;
-    // return esp_codec_dev_write(g_codec_dev, (void *)data, len);
-    int r = esp_codec_dev_write(g_codec_dev, (void *)data, len);
-    static uint32_t s_dump = 0;
-    if (s_dump < 5) {
-        const int16_t *s = (const int16_t *)data;
-        ESP_LOGW(TAG, "write_spk: len=%d ret=%d first4=%d %d %d %d",
-                 len, r, s[0], s[1], s[2], s[3]);
-        s_dump++;
-    }
-    return r;
+    if (!g_codec_dev || !data || len <= 0) return ESP_CODEC_DEV_INVALID_ARG;
+    return esp_codec_dev_write(g_codec_dev, (void *)data, len);
 }
 
 

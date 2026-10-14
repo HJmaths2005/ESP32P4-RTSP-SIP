@@ -14,7 +14,7 @@ i2c_master_bus_handle_t i2c_handle = NULL;
 extern volatile uint32_t s_isr_count;
 extern uint8_t use_h264;
 TaskHandle_t ip_updater_task;
-char* path;
+char path[100];
 //buffer that will be used for RTSP
 
 void print_log(void* args){
@@ -32,9 +32,8 @@ void ip_check(void* args){
 void app_main(void)
 {
     wifi_init();
-    path = malloc(sizeof(char) * 100);
 
-    ESP_LOGI(TAG,"wifi intialization and stationary connection success");
+    ESP_LOGI(TAG,"WiFi initialized; enter credentials in the WiFi page");
     ESP_LOGI(TAG,"our esp ip addres is %s\n" ,ip_address);
     lcd_panel = init_lcd();
     //initializing lcd 
@@ -43,6 +42,9 @@ void app_main(void)
     i2c_init();
     touch_handler = touch_init();
     ESP_LOGI(TAG, "touch module initialization finished");
+    /* Complete audio setup before UI callbacks can start SIP. */
+    esp_err_t audio_ret = audio_codec_init(8000);
+    if (audio_ret != ESP_OK) ESP_LOGW(TAG, "Audio unavailable: %s", esp_err_to_name(audio_ret));
     //initializing graphical library 
     graphical_lib_init(lcd_panel,display);
     ESP_LOGI(TAG, "lvgl initialization finished");
@@ -54,7 +56,6 @@ void app_main(void)
     // Initialize the audio ADC device via board manager
     
     
-    // ESP_ERROR_CHECK(audio_codec_init(8000));
     
     // esp_log_level_set("CSI", ESP_LOG_DEBUG);
     // esp_log_level_set("cam_ctlr",   ESP_LOG_VERBOSE);
@@ -67,8 +68,6 @@ void app_main(void)
     ESP_ERROR_CHECK(camera_init(lcd_panel));   // pass the same panel handle
     ESP_ERROR_CHECK(camera_start());
 
-    // rtc_handler = sip_service_start("udp://103:1@10.163.220.165:5060");
-    // esp_rtc_call(rtc_handler, "102@10.163.220.165:5060");
     // sprintf(path, "rtsp://%s:8554/esp32p4cam",ip_address);
     // rtsp_sservice_start(RTSP_SERVER,/*"rtsp://10.156.65.165:8554/esp32p4cam"*/path);
     // audio_dac_test_tone();

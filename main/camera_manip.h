@@ -39,7 +39,7 @@ extern "C" {
 #define OV02C10_LANE_BITRATE_MBPS   800
 
 /* Double buffering */
-#define CAMERA_FB_COUNT             2
+#define CAMERA_FB_COUNT             3
 
 /* ---- Panel size (what the LCD scans out) ---- */
 #define PANEL_H_RES                 800         /* panel width  */
@@ -91,7 +91,7 @@ esp_err_t camera_init(esp_lcd_panel_handle_t panel);
 esp_err_t camera_start(void);
 
 /** @brief Stop and release all camera resources. */
-void camera_deinit(void);
+esp_err_t camera_deinit(void);
 
 /**
  * @brief  Push the most recent completed frame to the LCD.
@@ -101,6 +101,7 @@ void camera_display_pump(void);
 
 /** @brief Access the frame-buffer context (e.g. from LVGL). */
 camera_fb_ctx_t *camera_get_context(void);
+bool camera_uses_h264(void);
 bool awb_on_statistics_done(isp_awb_ctlr_t ctlr,
                                    const esp_isp_awb_evt_data_t *edata,
                                    void *user_data);
@@ -108,7 +109,7 @@ bool awb_on_statistics_done(isp_awb_ctlr_t ctlr,
 uint32_t s_gamma_curve(uint32_t x);
 
 
-/* Latest captured frame, encoded to JPEG. Thread-safe. */
+/* Complete JPEG only. On ESP_ERR_INVALID_SIZE, out_len is the required capacity. */
 esp_err_t camera_get_jpeg(uint8_t *out_buf, size_t out_buf_size, size_t *out_len);
 
 /* Must be called once, from camera_init, after buffers are set up */

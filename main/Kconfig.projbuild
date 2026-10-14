@@ -1,0 +1,27 @@
+menu "Camera streaming"
+
+config APP_USE_H264
+    bool "Use the hardware H.264 encoder instead of MJPEG"
+    default n
+    help
+        Select the codec before camera initialization. Changing the codec at
+        runtime requires stopping RTSP and reinitializing the camera.
+
+config APP_JPEG_QUALITY
+    int "MJPEG image quality"
+    range 1 100
+    default 60
+    help
+        Higher values preserve more detail but increase WiFi bandwidth.
+        Start at 60 for VGA streaming; reduce it if frames arrive too slowly.
+
+config APP_H264_BITRATE
+    int "H.264 target bitrate (bits/s)"
+    range 250000 8000000
+    default 1500000
+    help
+        Target bitrate for VGA H.264. Intra-only frames tolerate the latest-frame
+        publisher dropping frames without breaking decoder reference frames.
+
+endmenu
+

@@ -24,3 +24,4 @@ void graphical_lib_init(esp_lcd_panel_handle_t lcd_panel, lv_display_t* display)
 
 
 
+

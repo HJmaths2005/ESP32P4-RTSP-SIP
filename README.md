@@ -1,6 +1,10 @@
-# ESP32P4 RTSP / SIP — review fixes
+# ESP32P4 SIP voice and camera calls
 
-This source snapshot applies review fixes to upstream commit
+The current UI provides Voice calls and Video calls. Video sends the local
+H.264 camera with duplex audio; remote video display is not implemented. See
+[the SIP video guide](docs/SIP-video-calls.md) for configuration and validation.
+
+The earlier source snapshot applies review fixes to upstream commit
 `e2a467a785d67f5320fec7b1fb97c4c389432bb1`.
 It is source code, not a built or hardware-validated firmware image.
 
@@ -24,7 +28,7 @@ It is source code, not a built or hardware-validated firmware image.
   returns real stop errors. The UI only enters streaming after successful start.
 - SIP settings, registration, dialing, answering and hanging up are available.
   Network callbacks update atomic state; LVGL refreshes on its own timer.
-- `APP_USE_H264` selects H.264 at build time; MJPEG remains the default.
+- `APP_USE_H264` selects H.264 at build time and is enabled for SIP video calls.
 
 ## Firmware environment
 
@@ -32,8 +36,8 @@ Use an ESP32-P4 board with the existing LCD, OV02C10 sensor, ES8311 codec and
 ESP32-C6 hosted WiFi wiring. Existing pin assignments are in the source/config.
 The upstream dependency lock records ESP-IDF 5.5.3. The project also requires
 ESP-ADF, including its submodules, via `ADF_PATH`; ESP-IDF must be active via
-`IDF_PATH`. API checks used IDF 5.5.3 and ADF 2.8 headers, but this snapshot has
-not been built against a complete installed SDK.
+`IDF_PATH`. The SIP video changes build with IDF 5.5.3 and ADF 2.8. Live calls still require
+validation on the board and Asterisk server.
 
 The inherited `dependencies.lock` contains the author's absolute local
 `esp_codec_dev` path. Back up and remove that lock on a new machine, then let
@@ -56,37 +60,28 @@ menuconfig, then rebuild.
 ## Device workflow
 
 1. Connect WiFi from the WiFi page. Empty passwords mean an open network.
-2. Start video from the main page. The address is
-   `rtsp://DEVICE_IP:8554/esp32p4cam`.
-   For lower playback latency, use:
-   ```sh
-   ffplay -rtsp_transport tcp -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 rtsp://DEVICE_IP:8554/esp32p4cam
-   ```
-   MJPEG quality defaults to 60/100 (previously 20). Adjust Camera streaming >
-   MJPEG image quality in menuconfig. Higher quality uses more network bandwidth;
-   reduce it if playback cannot keep up. Rebuild and flash for changes to apply.
+2. The Video calls card now opens a SIP dial page; it does not start RTSP.
+   Keep H.264 enabled in Camera encoding for camera calls.
 3. Enter a SIP server hostname/IPv4, account and password in settings.
    SIP currently uses UDP port 5060; settings last until restart.
-4. Open voice call, register, enter an extension, then call. Answer and hang up
-   are available on the same page. Audio is G.711 A-law at 8 kHz.
+4. Open Voice calls or Video calls, register for that mode, enter an extension,
+   then call. Incoming calls have Answer/Decline controls. Audio is G.711 A-law
+   at 8 kHz; the Video card additionally sends H.264 camera video.
 5. After WiFi loss, reconnect and start/register the services again.
 
 ## Local regression tests
 
-Python 3 and Clang/GCC or Zig are sufficient; ESP-IDF is not needed for these tests.
+The host tests compile production SIP and camera functions with mocked hardware
+boundaries. They cover registration and video state, mode switching, bounded
+frame copies, and H.264 SDP. Run after the SDK dependencies have been installed:
 
-```text
-python tests/run_host_tests.py --cc clang
-python tests/run_host_tests.py --cc /path/to/zig.exe
+```sh
+ESP_RTC_INCLUDE_DIR=managed_components/espressif__esp_media_protocols/include \
+  python3 -B -m unittest discover -s tests -v
 ```
 
-The tests compile current production C function bodies with fake device/RTOS
-boundaries. They exercise 100,000 CSI schedules, overlapping audio callbacks,
-codec read/write failures, JPEG capacity, RTSP stop propagation, SIP state,
-WiFi changes/cancellation, 32-byte SSIDs, IP loss and retry limits.
-Both test executables passed with Zig 0.16.0; `git diff --check` also passed.
-They do not validate DMA/cache hardware effects, firmware linkage, UI layout,
-actual SIP interoperability or sensor register behavior.
+They do not validate live RTP, remote decoding, sensor hardware or UI touch input.
+See [the SIP video guide](docs/SIP-video-calls.md) for acceptance checks.
 
 ## Required board acceptance checks
 
@@ -100,7 +95,7 @@ The removed credentials may still exist in the public upstream Git history.
 If they were real, rotate them. This snapshot does not rewrite GitHub history
 or change the remote repository.
 
-## H.264 streaming configuration
+## Legacy H.264 RTSP streaming configuration
 
 The active firmware uses hardware H.264 at 640 x 480 / 30 fps, with a
 1,500,000 bit/s target and GOP 1 (independent frames). The I/P experiment with
@@ -117,7 +112,7 @@ pass through unchanged; allocations use the library allocator and the returned
 SDP length includes the added line. After upgrading ADF, inspect DESCRIBE again:
 the compatibility match is intentionally exact. SPS/PPS are sent in-band.
 
-## Device interface
+## Earlier RTSP device interface
 
 The landscape interface uses a consistent dark theme, larger touch targets and
 separate WiFi, video, calls and settings cards. The home page shows live network

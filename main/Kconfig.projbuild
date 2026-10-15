@@ -1,11 +1,12 @@
-menu "Camera streaming"
+menu "Camera encoding"
 
 config APP_USE_H264
     bool "Use the hardware H.264 encoder instead of MJPEG"
-    default n
+    default y
     help
         Select the codec before camera initialization. Changing the codec at
-        runtime requires stopping RTSP and reinitializing the camera.
+        runtime requires stopping SIP/RTSP and reinitializing the camera.
+        SIP video calls use H.264; keep this enabled for the Video calls card.
 
 config APP_JPEG_QUALITY
     int "MJPEG image quality"
@@ -25,3 +26,13 @@ config APP_H264_BITRATE
 
 endmenu
 
+
+menu "SIP video calls"
+config APP_VIDEO_CALL_FPS
+    int "Camera transmit frame rate"
+    range 1 30
+    default 15
+    help
+        SIP sends the most recent complete camera frame at this rate. The
+        hardware encoder runs at 30 fps with independent frames (GOP 1).
+endmenu

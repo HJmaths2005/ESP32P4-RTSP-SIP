@@ -50,3 +50,6 @@ idf_component_register(SRCS
 if(CONFIG_MEDIA_PROTOCOL_LIB_ENABLE)
     message(FATAL_ERROR "Disable CONFIG_MEDIA_PROTOCOL_LIB_ENABLE in menuconfig; this project uses espressif/esp_media_protocols from the component registry.")
 endif()
+
+# Advertise FU-A packetization and send-only camera video in SIP SDP.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf")

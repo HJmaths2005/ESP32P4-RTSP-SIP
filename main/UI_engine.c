@@ -12,22 +12,24 @@ extern lv_display_t* display;
 extern lv_indev_t* touch;
 extern char* ip;
 extern _lock_t lvgl_api_lock; 
-extern char path[100];
 extern char ip_address[16];
-static esp_rtsp_handle_t s_rtsp = NULL;
+
 extern esp_rtc_handle_t rtc_handler;
 static void settings_save_cb(lv_event_t *e);
 static void voice_register_cb(lv_event_t *e);
-static void voice_answer_cb(lv_event_t *e);
+
 static void ui_service_timer_cb(lv_timer_t *timer);
 static lv_obj_t *s_main_status;
-static lv_obj_t *s_stream_status;
+static bool s_call_page_video;
+static char s_video_dialed_number[32];
+typedef enum { CALL_VIEW_NONE, CALL_VIEW_INCOMING, CALL_VIEW_ACTIVE } call_view_t;
+static call_view_t s_call_view;
 static lv_obj_t *s_sip_user_ta;
 static lv_obj_t *s_sip_pass_ta;
 static char s_sip_user[32];
 static char s_sip_password[64];
 static char s_sip_uri[512];
-static char s_stream_address[16];
+
 static uint32_t s_page_generation;
 /////////////////////////////////////////////////////////////
 //global lvgl object variables///////////////////////////////
@@ -49,13 +51,6 @@ lv_obj_t* main_page_ip_address_label = NULL;
 ////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////
-//streaming page variables
-lv_obj_t* streaming_stop_button = NULL;
-lv_obj_t* streaming_stop_label = NULL;
-//////////////////////////////////////////
-
-
-///////////////////////////////////////////
 //settings page variables//////////////////
 ///////////////////////////////////////////
 char sip_server_ip[64];
@@ -206,10 +201,10 @@ static lv_obj_t *ui_card(lv_obj_t *scr, const char *symbol, const char *title,
 //main page code 
 void ui_main_page(void)
 {
-    lv_obj_t *scr = ui_begin("Camera & calls", "Connect your network, then start a stream or make a call.");
+    lv_obj_t *scr = ui_begin("Camera & calls", "Connect your network, then make a voice or video call.");
     main_page_ip_address_label = ui_text(scr, "WiFi: disconnected", 1100, 42, 40, 158, false);
     main_page_wifi_button = ui_card(scr, LV_SYMBOL_WIFI, "WiFi", "Connect or change your wireless network.", 40, 224, main_page_wifi_button_clicked_cb);
-    main_page_video_button = ui_card(scr, LV_SYMBOL_VIDEO, "Live video", "Start the camera stream and view its playback address.", 660, 224, streaming_clicked_cb);
+    main_page_video_button = ui_card(scr, LV_SYMBOL_VIDEO, "Video calls", "Call an extension with audio and your camera.", 660, 224, video_call_clicked_cb);
     main_page_voice_button = ui_card(scr, LV_SYMBOL_CALL, "Voice calls", "Register your account, dial, or answer an incoming call.", 40, 472, voice_call_clicked_cb);
     main_page_filesys_button = ui_card(scr, LV_SYMBOL_SETTINGS, "Settings", "Manage your SIP server and account.", 660, 472, settings_clicked_cb);
     s_main_status = ui_text(scr, "Start with WiFi if this is your first connection.", 1160, 60, 40, 722, false);
@@ -248,19 +243,6 @@ void ui_wifi_connection_page(void)
     lv_obj_set_click_focusable(s_kb, false);
     lv_obj_add_event_cb(s_kb, kb_event_cb, LV_EVENT_ALL, NULL);
     lv_keyboard_set_textarea(s_kb, s_ssid_ta);
-}
-
-
-void video_streaming_page(void)
-{
-    lv_obj_t *scr = ui_begin("Live video", "Keep this page open while watching the camera from another device.");
-    s_stream_status = ui_text(scr, "Stream active", 1160, 40, 40, 164, false);
-    lv_obj_set_style_text_color(s_stream_status, lv_color_hex(0x58D5C9), 0);
-    ui_text(scr, "PLAYBACK ADDRESS", 1160, 36, 40, 224, false);
-    ui_text(scr, path, 1160, 100, 40, 282, true);
-    ui_text(scr, "Open this address in your RTSP player on the same network.", 1160, 80, 40, 422, false);
-    streaming_stop_button = ui_action(scr, "Stop streaming", 300, 40, 610, streaming_stop_button_clicked_cb, true);
-    streaming_stop_label = lv_obj_get_child(streaming_stop_button, 0);
 }
 
 
@@ -392,11 +374,9 @@ void ui_register_wifi_cb(void)
 void free_resources(void){
     ++s_page_generation;
     s_main_status = NULL;
-    s_stream_status = NULL;
+    s_call_view = CALL_VIEW_NONE;
     s_sip_user_ta = NULL;
     s_sip_pass_ta = NULL;
-    streaming_stop_button = NULL;
-    streaming_stop_label = NULL;
     main_page_ip_address_label = NULL;
     main_page_wifi_button      = NULL;
     main_page_wifi_label       = NULL;
@@ -498,47 +478,58 @@ void ui_settings_page(void)
     lv_keyboard_set_textarea(s_kb, s_sip_ta);
 }
 
-void ui_voice_call_page(void)
+static void ui_call_page(bool video)
 {
-    lv_obj_t *scr = ui_begin("Voice calls", "Register your account, then dial an extension or answer a call.");
+    s_call_page_video = video;
+    lv_obj_t *scr = ui_begin(video ? "Video calls" : "Voice calls",
+        video ? "Register for video, then dial. Your camera is sent with audio."
+              : "Register for voice, then dial an extension or answer a call.");
     form_button(scr, "Back", 1060, 770, wifi_back_cb);
-    s_voice_ta = form_field(scr, "Extension", s_dialed_number, 31, false, 600);
+    s_voice_ta = form_field(scr, "Extension", video ? s_video_dialed_number : s_dialed_number, 31, false, 600);
     lv_textarea_set_accepted_chars(s_voice_ta, "0123456789*#+");
     form_button(scr, "Register", 40, 410, voice_register_cb);
-    form_button(scr, "Call", 260, 410, voice_dial_clicked_cb);
-    // form_button(scr, "Answer", 480, 410, voice_answer_cb);
-    // form_button(scr, "Hang up", 700, 410, voice_hangup_clicked_cb);
+    form_button(scr, video ? "Video call" : "Call", 260, 410, voice_dial_clicked_cb);
     s_voice_status = lv_label_create(scr);
-    lv_label_set_text(s_voice_status, "Configure account in settings, then register.");
+    lv_label_set_text(s_voice_status, rtc_handler && sip_service_has_video() == video && sip_service_registered()
+        ? "Registered. Ready to call." : "Press Register to use this call mode.");
     ui_place(s_voice_status, 1160, 64, 40, 470);
     form_keyboard(scr);
     lv_keyboard_set_textarea(s_kb, s_voice_ta);
 }
 
-void incoming_call_page(void){
-    lv_obj_t *scr = ui_begin("Voice calls", "you have an incoming call right now");
-    ui_action(scr, "decline", 300, 300, 600, decline_call_back, true);
-    // form_button(scr, "decline", 1060, 770, decline_call_back);
-    ui_action(scr, "answer", 300, 650, 600, answer_call_back, false);
+void ui_voice_call_page(void) { ui_call_page(false); }
+void ui_video_call_page(void) { ui_call_page(true); }
+
+void incoming_call_page(void)
+{
+    lv_obj_t *scr = ui_begin(sip_service_has_video() ? "Video-capable call" : "Voice call",
+                             "Incoming call. Answer or decline.");
+    s_call_view = CALL_VIEW_INCOMING;
+    s_voice_status = ui_text(scr, "", 1160, 64, 40, 224, false);
+    ui_action(scr, "Decline", 300, 300, 600, decline_call_back, true);
+    ui_action(scr, "Answer", 300, 650, 600, answer_call_back, false);
 }
 
-void decline_call_back(lv_event_t* e){
-    
-    esp_rtc_bye(rtc_handler);
-    ui_main_page();
-    
+void decline_call_back(lv_event_t *e)
+{
+    voice_hangup_clicked_cb(e);
 }
 
-void answer_call_back(lv_event_t* e){
-    // /*
-    esp_rtc_answer(rtc_handler);
-    incall_page();
-    // */
+void answer_call_back(lv_event_t *e)
+{
+    if (!rtc_handler || !sip_service_incoming()) return;
+    int ret = esp_rtc_answer(rtc_handler);
+    if (s_voice_status) lv_label_set_text(s_voice_status,
+        ret == ESP_OK ? "Answering..." : "Could not answer; try again.");
 }
 
-void incall_page(void){
-    lv_obj_t *scr = ui_begin("Voice calls", "in-call");
-    ui_action(scr, "decline", 400, 400, 600, decline_call_back, true);
+void incall_page(void)
+{
+    lv_obj_t *scr = ui_begin(sip_service_has_video() ? "Video call" : "Voice call",
+        sip_service_has_video() ? "Local camera and audio. Remote video is not displayed." : "Audio call");
+    s_call_view = CALL_VIEW_ACTIVE;
+    s_voice_status = ui_text(scr, "Connecting...", 1160, 80, 40, 224, false);
+    ui_action(scr, "Hang up", 400, 400, 600, decline_call_back, true);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -603,42 +594,6 @@ void disconnect_clicked_cb(lv_event_t *e)
     if (wifi_disconnect() != ESP_OK && s_status_lb) lv_label_set_text(s_status_lb, "Disconnect request failed.");
 }
 
-void streaming_clicked_cb(lv_event_t *e){
-
-    char address[16];
-    if (!wifi_get_ip(address, sizeof(address))) {
-        if (s_main_status) lv_label_set_text(s_main_status, "Connect WiFi before streaming.");
-        ESP_LOGW(TAG, "no IP yet, not starting RTSP");
-        return;
-    }
-    if (s_rtsp) {
-        ESP_LOGW(TAG, "RTSP already running, ignoring press");
-        return;
-    }
-    snprintf(path, sizeof(path), "rtsp://%s:8554/esp32p4cam", address);
-    ESP_LOGI(TAG, "starting RTSP at %s", path);
-    s_rtsp = rtsp_service_start(RTSP_SERVER, path);
-    if (!s_rtsp) {
-        ESP_LOGE(TAG, "RTSP start failed");
-        if (s_main_status) lv_label_set_text(s_main_status, "Stream could not start; try again.");
-        return;
-    }
-    memcpy(s_stream_address, address, sizeof(address));
-    video_streaming_page();
-
-}
-
-void streaming_stop_button_clicked_cb(lv_event_t *e){
-    if (s_rtsp) {
-        if (rtsp_service_stop(s_rtsp) != ESP_OK) {
-            if (streaming_stop_label) lv_label_set_text(streaming_stop_label, "stop failed; retry");
-            return;
-        }
-        s_rtsp = NULL;
-    }
-    ui_main_page();
-}
-
 void settings_clicked_cb(lv_event_t *e)
 {
     ui_settings_page();
@@ -654,7 +609,7 @@ static void settings_save_cb(lv_event_t *e)
         lv_label_set_text(s_sip_status, "Enter a valid server and account.");
         return;
     }
-    if (rtc_handler && sip_service_in_call()) {
+    if (rtc_handler && (sip_service_in_call() || sip_service_incoming())) {
         lv_label_set_text(s_sip_status, "Hang up before changing the account.");
         return;
     }
@@ -668,15 +623,18 @@ static void settings_save_cb(lv_event_t *e)
     snprintf(sip_server_ip, sizeof(sip_server_ip), "%s", host);
     snprintf(s_sip_user, sizeof(s_sip_user), "%s", user);
     snprintf(s_sip_password, sizeof(s_sip_password), "%s", password);
-    lv_label_set_text(s_sip_status, "Saved until restart. Register on the voice page.");
+    lv_label_set_text(s_sip_status, "Saved until restart. Register on the voice or video page.");
 }
 
-void voice_call_clicked_cb(lv_event_t *e) { 
-    ui_voice_call_page(); 
-    // rtc_handler = sip_service_start("udp://103:1@172.23.138.165:5060");
-    // esp_rtc_call(rtc_handler,"102@172.23.138.165:5060");
-    // test_udp();
+static void open_call_page(bool video)
+{
+    if (sip_service_incoming()) incoming_call_page();
+    else if (sip_service_in_call()) incall_page();
+    else ui_call_page(video);
 }
+
+void voice_call_clicked_cb(lv_event_t *e) { open_call_page(false); }
+void video_call_clicked_cb(lv_event_t *e) { open_call_page(true); }
 
 static void voice_register_cb(lv_event_t *e)
 {
@@ -693,8 +651,15 @@ esp_log_level_set("MEDIA_LIB", ESP_LOG_VERBOSE);
     if (!app_sip_host_valid(sip_server_ip) || !s_sip_user[0]) {
         lv_label_set_text(s_voice_status, "Configure your SIP account in settings."); return;
     }
+    if (s_call_page_video && !camera_uses_h264()) {
+        lv_label_set_text(s_voice_status, "Enable H.264 in Camera encoding and rebuild for video calls."); return;
+    }
+    if (rtc_handler && (sip_service_in_call() || sip_service_incoming())) {
+        lv_label_set_text(s_voice_status, "Hang up before changing registration."); return;
+    }
     if (rtc_handler) {
-        if (!sip_service_registered() && sip_service_last_event() == ESP_RTC_EVENT_ERROR) {
+        if (sip_service_has_video() != s_call_page_video ||
+            (!sip_service_registered() && sip_service_last_event() == ESP_RTC_EVENT_ERROR)) {
             if (sip_service_stop(rtc_handler) != ESP_OK) {
                 ESP_LOGE(TAG,"not being registered");
                 lv_label_set_text(s_voice_status, "Registration could not reset; try again.");
@@ -714,7 +679,7 @@ esp_log_level_set("MEDIA_LIB", ESP_LOG_VERBOSE);
     }
     snprintf(s_sip_uri, sizeof(s_sip_uri), "udp://%s:%s@%s:5060", user, password, sip_server_ip);
     // ESP_LOGE(TAG,"the uri for registering is %s" , s_sip_uri);
-    rtc_handler = sip_service_start(s_sip_uri);
+    rtc_handler = sip_service_start_mode(s_sip_uri, s_call_page_video);
     lv_label_set_text(s_voice_status, rtc_handler ? "Registering..." : "Registration could not start.");
 }
 
@@ -724,22 +689,18 @@ void voice_dial_clicked_cb(lv_event_t *e)
     if (!wifi_is_connected() || !rtc_handler || !sip_service_registered()) {
         lv_label_set_text(s_voice_status, "Connect WiFi and register first."); return;
     }
-    if (sip_service_in_call()) { lv_label_set_text(s_voice_status, "A call is already active."); return; }
+    if (sip_service_in_call() || sip_service_incoming()) { lv_label_set_text(s_voice_status, "A call is already active."); return; }
+    if (sip_service_has_video() != s_call_page_video) {
+        lv_label_set_text(s_voice_status, "Press Register for this call mode first."); return;
+    }
     const char *number = lv_textarea_get_text(s_voice_ta);
     if (!number[0]) { lv_label_set_text(s_voice_status, "Enter an extension."); return; }
-    snprintf(s_dialed_number, sizeof(s_dialed_number), "%s", number);
+    char *dialed = s_call_page_video ? s_video_dialed_number : s_dialed_number;
+    snprintf(dialed, sizeof(s_dialed_number), "%s", number);
     char remote[128];
-    snprintf(remote, sizeof(remote), "%s@%s:5060", s_dialed_number, sip_server_ip);
+    snprintf(remote, sizeof(remote), "%s@%s:5060", dialed, sip_server_ip);
     int ret = esp_rtc_call(rtc_handler, remote);
     lv_label_set_text(s_voice_status, ret == ESP_OK ? "Calling..." : "Call could not start.");
-}
-
-static void voice_answer_cb(lv_event_t *e)
-{
-    if (!rtc_handler || !s_voice_status) return;
-    if (!sip_service_incoming()) { lv_label_set_text(s_voice_status, "No incoming call."); return; }
-    int ret = esp_rtc_answer(rtc_handler);
-    lv_label_set_text(s_voice_status, ret == ESP_OK ? "Answering..." : "Could not answer.");
 }
 
 void voice_hangup_clicked_cb(lv_event_t *e)
@@ -766,25 +727,32 @@ static void ui_service_timer_cb(lv_timer_t *timer)
         else lv_obj_add_state(main_page_video_button, LV_STATE_DISABLED);
     }
 
-    if (s_rtsp && (!connected || strcmp(address, s_stream_address))) {
-        if (rtsp_service_stop(s_rtsp) == ESP_OK) {
-            s_rtsp = NULL;
-            if (streaming_stop_label) lv_label_set_text(streaming_stop_label, "Back to home");
-            if (s_stream_status) lv_label_set_text(s_stream_status, "Stream stopped: WiFi changed. Reconnect and start again.");
-        }
-    }
     if (rtc_handler && !connected) {
+        if (s_call_view != CALL_VIEW_NONE) ui_main_page();
         if (sip_service_stop(rtc_handler) == ESP_OK) rtc_handler = NULL;
         if (s_voice_status) lv_label_set_text(s_voice_status, "WiFi disconnected. Reconnect and register.");
         return;
     }
-    static esp_rtc_event_t previous = ESP_RTC_EVENT_NULL;
-    static uint32_t previous_generation;
+    /* All LVGL calls stay on the LVGL timer. RTC callbacks only publish state,
+     * so service teardown while this lock is held cannot deadlock a SIP callback. */
+    if (rtc_handler && sip_service_incoming()) {
+        if (s_call_view != CALL_VIEW_INCOMING) incoming_call_page();
+    } else if (rtc_handler && sip_service_in_call()) {
+        if (s_call_view != CALL_VIEW_ACTIVE) incall_page();
+    } else if (s_call_view != CALL_VIEW_NONE) {
+        ui_main_page();
+    }
     esp_rtc_event_t event = sip_service_last_event();
-    if (s_main_status && rtc_handler && sip_service_incoming()) lv_label_set_text(s_main_status, "Incoming call. Open voice call to answer.");
-    if (!s_voice_status || !rtc_handler || (event == previous && previous_generation == s_page_generation)) return;
-    previous = event;
-    previous_generation = s_page_generation;
+    if (!s_voice_status || !rtc_handler) return;
+    if (s_call_view == CALL_VIEW_ACTIVE && event != ESP_RTC_EVENT_CALLING) {
+        lv_label_set_text(s_voice_status, sip_service_video_active()
+            ? "Connected. Sending camera video and audio."
+            : (sip_service_has_video() ? "Audio connected; waiting for peer to enable video." : "Call connected."));
+        return;
+    }
+    if (s_call_view == CALL_VIEW_NONE && sip_service_has_video() != s_call_page_video) {
+        lv_label_set_text(s_voice_status, "Press Register for this call mode first."); return;
+    }
     switch (event) {
         case ESP_RTC_EVENT_REGISTERED: lv_label_set_text(s_voice_status, "Registered. Ready to call."); break;
         case ESP_RTC_EVENT_UNREGISTERED: lv_label_set_text(s_voice_status, "Registering..."); break;

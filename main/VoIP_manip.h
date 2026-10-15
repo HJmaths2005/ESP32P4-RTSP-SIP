@@ -12,7 +12,7 @@
 #include "audio_manip.h"
 #include "esp_g711.h"
 #include "esp_timer.h"
-#include"UI_engine.h"
+
 // #include "esp_opus.h"
 
 
@@ -27,6 +27,10 @@ int _esp_sip_event_handler(esp_rtc_event_t event, void *ctx);
 int _send_audio(unsigned char *data, int len, void *ctx);
 int _receive_audio(unsigned char *data, int len, void *ctx);
 esp_rtc_handle_t sip_service_start(const char *uri);
+/* Stop the existing handle before changing mode. Voice mode offers no video. */
+esp_rtc_handle_t sip_service_start_mode(const char *uri, bool video);
+bool sip_service_has_video(void);
+bool sip_service_video_active(void);
 int sip_service_stop(esp_rtc_handle_t handle);
 bool sip_service_registered(void);
 bool sip_service_in_call(void);

@@ -808,3 +808,31 @@ esp_err_t camera_get_jpeg(uint8_t *out_buf, size_t out_buf_size, size_t *out_len
     *out_len = n;
     return ESP_OK;
 }
+
+/* Independent consumer cursor: SIP cannot consume an RTSP reader's frame.
+ * Nonblocking because esp_rtc invokes video callbacks from its timer task. */
+esp_err_t camera_copy_encoded_frame(uint8_t *out_buf, size_t capacity,
+                                    size_t *out_len, uint32_t *last_sequence)
+{
+    if (!out_len) return ESP_ERR_INVALID_ARG;
+    *out_len = 0;
+    if (!out_buf || !last_sequence) return ESP_ERR_INVALID_ARG;
+    if (!s_frame_lock) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_frame_lock, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
+    esp_err_t ret = ESP_ERR_NOT_FOUND;
+    if (s_jpeg_out_buf && s_jpeg_out_len && s_jpeg_seq != *last_sequence) {
+        if (s_jpeg_out_len > capacity) {
+            ret = ESP_ERR_INVALID_SIZE;
+        } else {
+            ret = esp_cache_msync(s_jpeg_out_buf, ALIGN_UP(s_jpeg_out_len, 64),
+                                 ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+            if (ret == ESP_OK) {
+                memcpy(out_buf, s_jpeg_out_buf, s_jpeg_out_len);
+                *out_len = s_jpeg_out_len;
+                *last_sequence = s_jpeg_seq;
+            }
+        }
+    }
+    xSemaphoreGive(s_frame_lock);
+    return ret;
+}

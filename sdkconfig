@@ -763,12 +763,18 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
-# Camera streaming
+# Camera encoding
 #
-# CONFIG_APP_USE_H264 is not set
+CONFIG_APP_USE_H264=y
 CONFIG_APP_JPEG_QUALITY=60
 CONFIG_APP_H264_BITRATE=1500000
-# end of Camera streaming
+# end of Camera encoding
+
+#
+# SIP video calls
+#
+CONFIG_APP_VIDEO_CALL_FPS=15
+# end of SIP video calls
 
 #
 # Audio HAL

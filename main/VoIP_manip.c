@@ -26,7 +26,7 @@
 #include "WIFI_manip.h"
 #include <stdatomic.h>
 #include <strings.h>
-#include "common.h"
+#include "camera_manip.h"
 
 
 static const char *TAG = "SIP_SERVICE";
@@ -34,7 +34,13 @@ static atomic_bool s_registered;
 static atomic_bool s_in_call;
 static atomic_bool s_incoming;
 static atomic_int s_last_event = ESP_RTC_EVENT_UNREGISTERED;
-extern _lock_t lvgl_api_lock;
+static atomic_bool s_video_enabled;
+static atomic_bool s_video_active;
+static atomic_bool s_audio_active;
+static uint32_t s_video_sequence;
+
+bool sip_service_has_video(void) { return atomic_load(&s_video_enabled); }
+bool sip_service_video_active(void) { return atomic_load(&s_video_active); }
 
 bool sip_service_registered(void) { return atomic_load(&s_registered); }
 bool sip_service_in_call(void) { return atomic_load(&s_in_call); }
@@ -58,35 +64,35 @@ int _esp_sip_event_handler(esp_rtc_event_t event, void *ctx)
         case ESP_RTC_EVENT_CALLING: atomic_store(&s_in_call, true); break;
         case ESP_RTC_EVENT_INCOMING:
             atomic_store(&s_incoming, true);
-            _lock_acquire(&lvgl_api_lock);
-            incoming_call_page();
-            _lock_release(&lvgl_api_lock);
             break;
         case ESP_RTC_EVENT_CALL_ANSWERED:
-        atomic_store(&s_in_call, true);
-        _lock_acquire(&lvgl_api_lock);
-        incall_page();
-        _lock_release(&lvgl_api_lock);
-        break;
-        case ESP_RTC_EVENT_AUDIO_SESSION_BEGIN:
             atomic_store(&s_incoming, false);
             atomic_store(&s_in_call, true);
             break;
-        case ESP_RTC_EVENT_HANGUP:
-            _lock_acquire(&lvgl_api_lock);
-            ui_main_page();
-            _lock_release(&lvgl_api_lock);
-            break;
-        case ESP_RTC_EVENT_AUDIO_SESSION_END:
+        case ESP_RTC_EVENT_AUDIO_SESSION_BEGIN:
+            atomic_store(&s_audio_active, true);
             atomic_store(&s_incoming, false);
-            atomic_store(&s_in_call, false);
+            atomic_store(&s_in_call, true);
             break;
         case ESP_RTC_EVENT_VIDEO_SESSION_BEGIN:
+            atomic_store(&s_video_active, sip_service_has_video());
+            atomic_store(&s_incoming, false);
+            atomic_store(&s_in_call, true);
+            break;
+        case ESP_RTC_EVENT_AUDIO_SESSION_END:
+            atomic_store(&s_audio_active, false);
+            atomic_store(&s_in_call, sip_service_video_active());
             break;
         case ESP_RTC_EVENT_VIDEO_SESSION_END:
-            break; 
+            atomic_store(&s_video_active, false);
+            atomic_store(&s_in_call, atomic_load(&s_audio_active));
+            break;
         case ESP_RTC_EVENT_ERROR:
             atomic_store(&s_registered, false);
+            /* fall through */
+        case ESP_RTC_EVENT_HANGUP:
+            atomic_store(&s_audio_active, false);
+            atomic_store(&s_video_active, false);
             atomic_store(&s_incoming, false);
             atomic_store(&s_in_call, false);
             break;
@@ -127,17 +133,37 @@ int _receive_audio(unsigned char *data, int len, void *ctx)
     return consumed;
 }
 
-int _send_video(unsigned cahr *data, int len, void *ctx){
-    //todo 
+/* esp_rtc 0.6.1 passes an output length initially set to zero, not capacity.
+ * The SDK allocates vcodec_info.len bytes for this callback's destination. */
+static int sip_send_video(unsigned char *data, unsigned int *len, void *ctx)
+{
+    if (!len) return ESP_ERR_INVALID_ARG;
+    *len = 0;
+    if (!data) return ESP_ERR_INVALID_ARG;
+    if (!sip_service_video_active()) return ESP_OK;
+    size_t written = 0;
+    esp_err_t ret = camera_copy_encoded_frame(data, JPEG_BUF_SIZE, &written, &s_video_sequence);
+    if (ret == ESP_OK) *len = (unsigned int)written;
+    /* A busy producer or no new frame means a dropped frame, never a partial NAL. */
+    return ret;
 }
 
-int _receive_video(unsigned char *data , int len , void *ctx){
-    //todo 
+/* This feature sends the local camera with duplex audio. Remote video is not
+ * decoded/displayed; keep a safe sink for SDK receive callbacks. */
+static int sip_receive_video(unsigned char *data, int len, void *ctx)
+{
+    return data && len > 0 ? len : 0;
 }
 
 esp_rtc_handle_t sip_service_start(const char *uri)
 {
+    return sip_service_start_mode(uri, false);
+}
+
+esp_rtc_handle_t sip_service_start_mode(const char *uri, bool video)
+{
     if (!uri || !g_codec_dev || !wifi_is_connected()) return NULL;
+    if (video && !camera_uses_h264()) return NULL;
     char *address = _get_network_ip();
     if (!address) return NULL;
     media_lib_add_default_adapter();
@@ -145,22 +171,37 @@ esp_rtc_handle_t sip_service_start(const char *uri)
     atomic_store(&s_in_call, false);
     atomic_store(&s_incoming, false);
     atomic_store(&s_last_event, ESP_RTC_EVENT_UNREGISTERED);
+    atomic_store(&s_video_enabled, video);
+    atomic_store(&s_video_active, false);
+    atomic_store(&s_audio_active, false);
+    s_video_sequence = 0;
+    static esp_rtc_video_info_t video_info = {
+        .vcodec = RTC_VCODEC_H264,
+        .width = CAMERA_H_RES,
+        .height = CAMERA_V_RES,
+        .fps = CONFIG_APP_VIDEO_CALL_FPS,
+        .len = JPEG_BUF_SIZE,
+    };
     static esp_rtc_data_cb_t callbacks = {
         .send_audio = _send_audio,
         .receive_audio = _receive_audio,
     };
-    // ESP_LOGE(TAG,"ip address = %s " , address);
+    callbacks.send_video = video ? sip_send_video : NULL;
+    callbacks.receive_video = video ? sip_receive_video : NULL;
     esp_rtc_config_t config = {
         .uri = uri,
         .local_addr = address,
         .acodec_type = RTC_ACODEC_G711A,
+        .vcodec_info = video ? &video_info : NULL,
         /* Keep the protocol's frame-size default: older ADF headers do not
            expose aud_frame_size. Callback buffers remain bounded to 160 samples. */
         .data_cb = &callbacks,
         .event_handler = _esp_sip_event_handler,
         .p2p_mode = false,
     };
-    return esp_rtc_service_init(&config);
+    esp_rtc_handle_t handle = esp_rtc_service_init(&config);
+    if (!handle) atomic_store(&s_video_enabled, false);
+    return handle;
 }
 
 int sip_service_stop(esp_rtc_handle_t handle)
@@ -168,6 +209,9 @@ int sip_service_stop(esp_rtc_handle_t handle)
     if (!handle) return ESP_ERR_INVALID_ARG;
     int ret = esp_rtc_service_deinit(handle);
     if (ret == ESP_OK) {
+        atomic_store(&s_video_enabled, false);
+        atomic_store(&s_video_active, false);
+        atomic_store(&s_audio_active, false);
         atomic_store(&s_registered, false);
         atomic_store(&s_in_call, false);
         atomic_store(&s_incoming, false);

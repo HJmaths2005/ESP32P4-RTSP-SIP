@@ -102,6 +102,10 @@ void camera_display_pump(void);
 /** @brief Access the frame-buffer context (e.g. from LVGL). */
 camera_fb_ctx_t *camera_get_context(void);
 bool camera_uses_h264(void);
+/* Copy one whole, new encoded frame. No truncation or blocking on the encoder.
+ * last_sequence advances only on a successful copy; out_len is zero on failure. */
+esp_err_t camera_copy_encoded_frame(uint8_t *out_buf, size_t capacity,
+                                    size_t *out_len, uint32_t *last_sequence);
 bool awb_on_statistics_done(isp_awb_ctlr_t ctlr,
                                    const esp_isp_awb_evt_data_t *edata,
                                    void *user_data);

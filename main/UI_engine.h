@@ -4,7 +4,7 @@
 #include "common.h"
 #include "WIFI_manip.h"
 #include "sys/lock.h"
-#include "RTSP_manip.h"
+#include "camera_manip.h"
 
 
 
@@ -22,6 +22,8 @@ void ui_settings_page(void);
 void settings_clicked_cb(lv_event_t *e);
 
 void ui_voice_call_page(void);
+void ui_video_call_page(void);
+void video_call_clicked_cb(lv_event_t *e);
 void voice_call_clicked_cb(lv_event_t *e);   /* from main page, opens the dial page */
 void voice_dial_clicked_cb(lv_event_t *e);   /* from dial page, places the call    */
 void voice_hangup_clicked_cb(lv_event_t *e); /* from in-call page                  */
@@ -68,8 +70,7 @@ void connect_clicked_cb(lv_event_t *e);
 void ta_event_cb(lv_event_t *e);
 void kb_event_cb(lv_event_t *e);
 void disconnect_clicked_cb(lv_event_t *e);
-void streaming_clicked_cb(lv_event_t *e);
-void streaming_stop_button_clicked_cb(lv_event_t *e);
+
 
 
 void wifi_state_cb(wifi_state_t st, const char *ip);

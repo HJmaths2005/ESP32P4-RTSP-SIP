@@ -92,6 +92,11 @@ static lv_obj_t *s_ssid_ta   = NULL;
 static lv_obj_t *s_pass_ta   = NULL;
 static lv_obj_t *s_kb        = NULL;
 static lv_obj_t *s_status_lb = NULL;
+
+
+lv_obj_t *decline_button = NULL;
+lv_obj_t *answer_button = NULL;
+lv_obj_t *in_call_decline_button = NULL;
 const char* TAG = "UI_engine";
 
 //////////////////////////////////////////////////////////////////////
@@ -414,6 +419,8 @@ void free_resources(void){
     s_call_info    = NULL;
     s_hangup_btn   = NULL;
     s_hangup_lbl   = NULL;
+    decline_button = NULL;
+    answer_button = NULL;
 }
 
 
@@ -499,13 +506,39 @@ void ui_voice_call_page(void)
     lv_textarea_set_accepted_chars(s_voice_ta, "0123456789*#+");
     form_button(scr, "Register", 40, 410, voice_register_cb);
     form_button(scr, "Call", 260, 410, voice_dial_clicked_cb);
-    form_button(scr, "Answer", 480, 410, voice_answer_cb);
-    form_button(scr, "Hang up", 700, 410, voice_hangup_clicked_cb);
+    // form_button(scr, "Answer", 480, 410, voice_answer_cb);
+    // form_button(scr, "Hang up", 700, 410, voice_hangup_clicked_cb);
     s_voice_status = lv_label_create(scr);
     lv_label_set_text(s_voice_status, "Configure account in settings, then register.");
     ui_place(s_voice_status, 1160, 64, 40, 470);
     form_keyboard(scr);
     lv_keyboard_set_textarea(s_kb, s_voice_ta);
+}
+
+void incoming_call_page(void){
+    lv_obj_t *scr = ui_begin("Voice calls", "you have an incoming call right now");
+    ui_action(scr, "decline", 300, 300, 600, decline_call_back, true);
+    // form_button(scr, "decline", 1060, 770, decline_call_back);
+    ui_action(scr, "answer", 300, 650, 600, answer_call_back, false);
+}
+
+void decline_call_back(lv_event_t* e){
+    
+    esp_rtc_bye(rtc_handler);
+    ui_main_page();
+    
+}
+
+void answer_call_back(lv_event_t* e){
+    // /*
+    esp_rtc_answer(rtc_handler);
+    incall_page();
+    // */
+}
+
+void incall_page(void){
+    lv_obj_t *scr = ui_begin("Voice calls", "in-call");
+    ui_action(scr, "decline", 400, 400, 600, decline_call_back, true);
 }
 
 //////////////////////////////////////////////////////////////////////////

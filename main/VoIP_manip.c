@@ -26,12 +26,15 @@
 #include "WIFI_manip.h"
 #include <stdatomic.h>
 #include <strings.h>
+#include "common.h"
+
 
 static const char *TAG = "SIP_SERVICE";
 static atomic_bool s_registered;
 static atomic_bool s_in_call;
 static atomic_bool s_incoming;
 static atomic_int s_last_event = ESP_RTC_EVENT_UNREGISTERED;
+extern _lock_t lvgl_api_lock;
 
 bool sip_service_registered(void) { return atomic_load(&s_registered); }
 bool sip_service_in_call(void) { return atomic_load(&s_in_call); }
@@ -55,17 +58,33 @@ int _esp_sip_event_handler(esp_rtc_event_t event, void *ctx)
         case ESP_RTC_EVENT_CALLING: atomic_store(&s_in_call, true); break;
         case ESP_RTC_EVENT_INCOMING:
             atomic_store(&s_incoming, true);
+            _lock_acquire(&lvgl_api_lock);
+            incoming_call_page();
+            _lock_release(&lvgl_api_lock);
             break;
-        case ESP_RTC_EVENT_CALL_ANSWERED:atomic_store(&s_in_call, true);break;
+        case ESP_RTC_EVENT_CALL_ANSWERED:
+        atomic_store(&s_in_call, true);
+        _lock_acquire(&lvgl_api_lock);
+        incall_page();
+        _lock_release(&lvgl_api_lock);
+        break;
         case ESP_RTC_EVENT_AUDIO_SESSION_BEGIN:
             atomic_store(&s_incoming, false);
             atomic_store(&s_in_call, true);
             break;
         case ESP_RTC_EVENT_HANGUP:
+            _lock_acquire(&lvgl_api_lock);
+            ui_main_page();
+            _lock_release(&lvgl_api_lock);
+            break;
         case ESP_RTC_EVENT_AUDIO_SESSION_END:
             atomic_store(&s_incoming, false);
             atomic_store(&s_in_call, false);
             break;
+        case ESP_RTC_EVENT_VIDEO_SESSION_BEGIN:
+            break;
+        case ESP_RTC_EVENT_VIDEO_SESSION_END:
+            break; 
         case ESP_RTC_EVENT_ERROR:
             atomic_store(&s_registered, false);
             atomic_store(&s_incoming, false);
@@ -106,6 +125,14 @@ int _receive_audio(unsigned char *data, int len, void *ctx)
         consumed += n;
     }
     return consumed;
+}
+
+int _send_video(unsigned cahr *data, int len, void *ctx){
+    //todo 
+}
+
+int _receive_video(unsigned char *data , int len , void *ctx){
+    //todo 
 }
 
 esp_rtc_handle_t sip_service_start(const char *uri)

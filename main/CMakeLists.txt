@@ -38,6 +38,8 @@ idf_component_register(SRCS
         
 )
 
+
+
 # if(CONFIG_APP_USE_H264)
 # Compatibility fix for FU-A SDP in the prebuilt ADF RTSP server.
 #   target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf")

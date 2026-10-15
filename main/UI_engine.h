@@ -75,3 +75,7 @@ void streaming_stop_button_clicked_cb(lv_event_t *e);
 void wifi_state_cb(wifi_state_t st, const char *ip);
 void ui_register_wifi_cb(void);
 void free_resources(void);
+void incoming_call_page(void);
+void decline_call_back(lv_event_t* e);
+void answer_call_back(lv_event_t* e);
+void incall_page(void);

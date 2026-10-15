@@ -159,34 +159,3 @@ void h264_encoder_deinit(void)
     s_frame_log_counter = 0;
     ESP_LOGI(TAG, "H.264 HW Encoder deinitialized");
 }
-
-/*
-void h264_encoder_force_idr(void)
-{
-    if (!s_enc) return;
-
-    esp_h264_enc_param_hw_handle_t param_hd = NULL;
-    esp_h264_err_t ret = esp_h264_enc_hw_get_param_hd(s_enc, &param_hd);
-    if (ret == ESP_H264_ERR_OK && param_hd) {
-        esp_h264_enc_force_idr((esp_h264_enc_param_handle_t)param_hd);
-    }
-}
-    
-
-void h264_encoder_force_idr(void)
-{
-    if (!s_enc) return;
-
-    // Get the parameter handle from the encoder
-    esp_h264_enc_param_hw_handle_t param_hd = NULL;
-    esp_h264_err_t ret = esp_h264_enc_hw_get_param_hd(s_enc, &param_hd);
-    
-    if (ret == ESP_H264_ERR_OK && param_hd) {
-        // Cast to the base param handle type required by the API
-        esp_h264_enc_force_idr((esp_h264_enc_param_handle_t)param_hd);
-        ESP_LOGI(TAG, "Forced IDR requested");
-    } else {
-        ESP_LOGW(TAG, "Failed to get param handle for IDR: %d", ret);
-    }
-}
-    */

@@ -38,6 +38,8 @@ static bool wifi_get_ip(char *address, size_t size) { (void)address; (void)size;
         checks = r'''
 int main(void) {
     (void)s_video_sequence;
+    (void)s_video_callbacks; (void)s_video_frames; (void)s_video_bytes;
+    (void)s_video_busy; (void)s_video_duplicate; (void)s_video_oversize; (void)s_video_failed;
     assert(!sip_service_registered());
     assert(_esp_sip_event_handler(ESP_RTC_EVENT_REGISTERED, NULL) == ESP_OK);
     assert(sip_service_registered());
@@ -176,6 +178,62 @@ int main(void) {
                             "-I", str(ROOT / "main"), str(path / "retry.c"),
                             "-o", str(path / "retry")], check=True)
             subprocess.run([str(path / "retry")], check=True)
+
+
+class SipDialTests(unittest.TestCase):
+    def test_sdk_receives_extension_without_duplicate_server(self):
+        include_dir = os.environ.get("ESP_RTC_INCLUDE_DIR", str(ROOT / "managed_components/espressif__esp_media_protocols/include"))
+        source = (ROOT / "main/UI_engine.c").read_text()
+        start = source.index("void voice_dial_clicked_cb(lv_event_t *e)\n{")
+        callback = source[start:source.index("\nvoid voice_hangup_clicked_cb", start)]
+        harness = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include "esp_rtc.h"
+#define ESP_OK 0
+typedef void lv_event_t;
+static void *s_voice_status=(void *)1, *s_voice_ta=(void *)1;
+static esp_rtc_handle_t rtc_handler=(esp_rtc_handle_t)(uintptr_t)1;
+static bool s_call_page_video, configured_video, busy;
+static char s_dialed_number[32], s_video_dialed_number[32];
+static int calls;
+static bool wifi_is_connected(void) { return true; }
+static bool sip_service_registered(void) { return true; }
+static bool sip_service_in_call(void) { return busy; }
+static bool sip_service_incoming(void) { return false; }
+static bool sip_service_has_video(void) { return configured_video; }
+static const char *lv_textarea_get_text(void *field) { return "101"; }
+static void lv_label_set_text(void *field, const char *text) { }
+int esp_rtc_call(esp_rtc_handle_t handle, const char *remote) {
+    assert(strcmp(remote,"101")==0);
+    assert(!strchr(remote,'@'));
+    ++calls;
+    return ESP_OK;
+}
+'''
+        checks = r'''
+int main(void) {
+    voice_dial_clicked_cb(NULL);
+    assert(calls==1 && !strcmp(s_dialed_number,"101"));
+    s_call_page_video=true;
+    voice_dial_clicked_cb(NULL); assert(calls==1); /* Must register new mode first. */
+    configured_video=true;
+    voice_dial_clicked_cb(NULL);
+    assert(calls==2 && !strcmp(s_video_dialed_number,"101"));
+    busy=true;
+    voice_dial_clicked_cb(NULL); assert(calls==2);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "dial.c").write_text(harness + callback + checks)
+            subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra",
+                            "-Wno-unused-parameter", "-I", include_dir,
+                            str(path / "dial.c"), "-o", str(path / "dial")], check=True)
+            subprocess.run([str(path / "dial")], check=True)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ esp_rtc_handle_t sip_service_start(const char *uri);
 esp_rtc_handle_t sip_service_start_mode(const char *uri, bool video);
 bool sip_service_has_video(void);
 bool sip_service_video_active(void);
+void sip_service_video_diagnostics(void);
 int sip_service_stop(esp_rtc_handle_t handle);
 bool sip_service_registered(void);
 bool sip_service_in_call(void);

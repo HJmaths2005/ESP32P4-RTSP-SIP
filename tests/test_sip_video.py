@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_c(source, headers=None):
+def run_c(source, headers=None, extra_flags=()):
     include = os.environ.get("ESP_RTC_INCLUDE_DIR", str(ROOT / "managed_components/espressif__esp_media_protocols/include"))
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory)
@@ -17,7 +17,7 @@ def run_c(source, headers=None):
             (path / name).write_text(contents)
         (path / "check.c").write_text(source)
         subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra",
-                        "-Wno-unused-parameter", "-I", str(path), "-I", include,
+                        "-Wno-unused-parameter", *extra_flags, "-I", str(path), "-I", include,
                         str(path / "check.c"), "-o", str(path / "check")], check=True)
         subprocess.run([str(path / "check")], check=True)
 
@@ -31,6 +31,7 @@ class SipVideoTests(unittest.TestCase):
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <stdatomic.h>
@@ -39,13 +40,16 @@ typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_ERR_INVALID_ARG 1
 #define ESP_ERR_NOT_FOUND 2
+#define ESP_ERR_TIMEOUT 3
+#define ESP_ERR_INVALID_SIZE 4
 #define ESP_CODEC_DEV_OK 0
 #define PCM_FRAME_SAMPLES 160
 #define CAMERA_H_RES 640
 #define CAMERA_V_RES 480
 #define JPEG_BUF_SIZE (640 * 1024)
 #define CONFIG_APP_VIDEO_CALL_FPS 15
-#define ESP_LOGI(tag, ...) ((void)(tag))
+#define ESP_LOGI(tag, ...) do { (void)(tag); if (0) printf(__VA_ARGS__); } while (0)
+static int64_t esp_timer_get_time(void) { return 1000000; }
 static void *g_codec_dev = (void *)1;
 static bool h264 = true, connected = true, fail_init;
 static int frames, deinitializations, init_count, frame_result;
@@ -90,6 +94,7 @@ int main(void) {
     /* SDK supplies len=0: it is an output parameter, not destination capacity. */
     assert(captured.data_cb->send_video(data,&len,NULL) == ESP_OK && len == 4 && frames == 1);
     assert(memcmp(data,"NAL!",4) == 0);
+    assert(atomic_load(&s_video_frames)==1 && atomic_load(&s_video_bytes)==4);
     frame_result=ESP_ERR_NOT_FOUND; len=99;
     captured.data_cb->send_video(data,&len,NULL);
     assert(len == 0);
@@ -175,13 +180,19 @@ void media_lib_free(void *p) { free(p); }
 '''
         checks = r'''
 int main(void) {
-    char *text=NULL;
-    int n=__wrap_media_lib_asprintf(&text,"m=video %d RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n",5004);
+    char buffer[1024]; char *text=buffer;
+    int n=snprintf(buffer,sizeof(buffer),"m=video %d RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n",5004);
     assert(n==(int)strlen(text));
     assert(strstr(text,"m=video 5004 RTP/AVP 96\r\n"));
     assert(strstr(text,"a=fmtp:96 packetization-mode=1\r\n"));
     assert(strstr(text,"a=sendonly\r\n"));
-    media_lib_free(text);
+    char tiny[4];
+    int full=snprintf(NULL,0,"m=video %d RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n",5004);
+    assert(full==n);
+    assert(snprintf(tiny,sizeof(tiny),"m=video %d RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n",5004)==full);
+    assert(!strcmp(tiny,"m=v"));
+    n=snprintf(buffer,sizeof(buffer),"m=audio %d RTP/AVP 8\r\n",5002);
+    assert(!strcmp(buffer,"m=audio 5002 RTP/AVP 8\r\n"));
     n=__wrap_media_lib_asprintf(&text,"m=audio %d RTP/AVP 8\r\n",5002);
     assert(!strcmp(text,"m=audio 5002 RTP/AVP 8\r\n") && n==(int)strlen(text));
     media_lib_free(text);
@@ -190,7 +201,7 @@ int main(void) {
     return 0;
 }
 '''
-        run_c(mocks + source + checks, {"media_lib_os.h": "#include <stddef.h>\nvoid *media_lib_malloc(size_t);\nvoid media_lib_free(void *);\n"})
+        run_c(mocks + source + checks, {"media_lib_os.h": "#include <stddef.h>\nvoid *media_lib_malloc(size_t);\nvoid media_lib_free(void *);\n"}, extra_flags=("-fno-builtin-snprintf", "-Wl,--wrap=snprintf"))
 
 
 if __name__ == "__main__":

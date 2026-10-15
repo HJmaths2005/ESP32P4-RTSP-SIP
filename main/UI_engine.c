@@ -697,9 +697,8 @@ void voice_dial_clicked_cb(lv_event_t *e)
     if (!number[0]) { lv_label_set_text(s_voice_status, "Enter an extension."); return; }
     char *dialed = s_call_page_video ? s_video_dialed_number : s_dialed_number;
     snprintf(dialed, sizeof(s_dialed_number), "%s", number);
-    char remote[128];
-    snprintf(remote, sizeof(remote), "%s@%s:5060", dialed, sip_server_ip);
-    int ret = esp_rtc_call(rtc_handler, remote);
+    /* esp_rtc appends the registered server; it expects only the extension. */
+    int ret = esp_rtc_call(rtc_handler, dialed);
     lv_label_set_text(s_voice_status, ret == ESP_OK ? "Calling..." : "Call could not start.");
 }
 
@@ -712,6 +711,7 @@ void voice_hangup_clicked_cb(lv_event_t *e)
 
 static void ui_service_timer_cb(lv_timer_t *timer)
 {
+    sip_service_video_diagnostics();
     char address[16];
     bool connected = wifi_get_ip(address, sizeof(address));
     if (main_page_ip_address_label) {

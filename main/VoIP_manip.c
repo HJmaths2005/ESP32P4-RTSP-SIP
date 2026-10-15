@@ -38,6 +38,10 @@ static atomic_bool s_video_enabled;
 static atomic_bool s_video_active;
 static atomic_bool s_audio_active;
 static uint32_t s_video_sequence;
+static atomic_uint s_video_callbacks, s_video_frames, s_video_bytes;
+static atomic_uint s_video_busy, s_video_duplicate, s_video_oversize, s_video_failed;
+static atomic_bool s_video_headers_seen;
+static atomic_uint s_video_nal_mask;
 
 bool sip_service_has_video(void) { return atomic_load(&s_video_enabled); }
 bool sip_service_video_active(void) { return atomic_load(&s_video_active); }
@@ -75,6 +79,9 @@ int _esp_sip_event_handler(esp_rtc_event_t event, void *ctx)
             atomic_store(&s_in_call, true);
             break;
         case ESP_RTC_EVENT_VIDEO_SESSION_BEGIN:
+            ESP_LOGI(TAG, "Video session began");
+            atomic_store(&s_video_headers_seen, false);
+            atomic_store(&s_video_nal_mask, 0);
             atomic_store(&s_video_active, sip_service_has_video());
             atomic_store(&s_incoming, false);
             atomic_store(&s_in_call, true);
@@ -84,6 +91,7 @@ int _esp_sip_event_handler(esp_rtc_event_t event, void *ctx)
             atomic_store(&s_in_call, sip_service_video_active());
             break;
         case ESP_RTC_EVENT_VIDEO_SESSION_END:
+            ESP_LOGI(TAG, "Video session ended");
             atomic_store(&s_video_active, false);
             atomic_store(&s_in_call, atomic_load(&s_audio_active));
             break;
@@ -140,10 +148,28 @@ static int sip_send_video(unsigned char *data, unsigned int *len, void *ctx)
     if (!len) return ESP_ERR_INVALID_ARG;
     *len = 0;
     if (!data) return ESP_ERR_INVALID_ARG;
+    atomic_fetch_add(&s_video_callbacks, 1);
     if (!sip_service_video_active()) return ESP_OK;
     size_t written = 0;
     esp_err_t ret = camera_copy_encoded_frame(data, JPEG_BUF_SIZE, &written, &s_video_sequence);
-    if (ret == ESP_OK) *len = (unsigned int)written;
+    if (ret == ESP_OK) {
+        *len = (unsigned int)written;
+        atomic_fetch_add(&s_video_frames, 1);
+        atomic_fetch_add(&s_video_bytes, (unsigned)written);
+        if (!atomic_exchange(&s_video_headers_seen, true)) {
+            /* Inspect only the first supplied frame; never log picture bytes. */
+            unsigned mask = 0;
+            for (size_t i = 0; i + 3 < written; ++i) {
+                if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+                    mask |= 1u << (data[i + 3] & 31);
+                }
+            }
+            atomic_store(&s_video_nal_mask, mask);
+        }
+    } else if (ret == ESP_ERR_TIMEOUT) atomic_fetch_add(&s_video_busy, 1);
+    else if (ret == ESP_ERR_NOT_FOUND) atomic_fetch_add(&s_video_duplicate, 1);
+    else if (ret == ESP_ERR_INVALID_SIZE) atomic_fetch_add(&s_video_oversize, 1);
+    else atomic_fetch_add(&s_video_failed, 1);
     /* A busy producer or no new frame means a dropped frame, never a partial NAL. */
     return ret;
 }
@@ -153,6 +179,26 @@ static int sip_send_video(unsigned char *data, unsigned int *len, void *ctx)
 static int sip_receive_video(unsigned char *data, int len, void *ctx)
 {
     return data && len > 0 ? len : 0;
+}
+
+/* Called from the UI timer, not the SDK's time-sensitive media callback.
+ * These are frames supplied to the RTP library, not proof of network delivery. */
+void sip_service_video_diagnostics(void)
+{
+    static int64_t last_report;
+    if (!sip_service_has_video() || !sip_service_in_call()) return;
+    int64_t now = esp_timer_get_time();
+    if (now - last_report < 1000000) return;
+    last_report = now;
+    unsigned mask = atomic_load(&s_video_nal_mask);
+    ESP_LOGI(TAG, "Video sample: active=%d callbacks=%u supplied=%u bytes=%u busy=%u no-new=%u oversize=%u failed=%u",
+             sip_service_video_active(), atomic_exchange(&s_video_callbacks, 0),
+             atomic_exchange(&s_video_frames, 0), atomic_exchange(&s_video_bytes, 0),
+             atomic_exchange(&s_video_busy, 0), atomic_exchange(&s_video_duplicate, 0),
+             atomic_exchange(&s_video_oversize, 0), atomic_exchange(&s_video_failed, 0));
+    ESP_LOGI(TAG, "First supplied frame: seen=%d SPS=%d PPS=%d IDR=%d",
+             atomic_load(&s_video_headers_seen), !!(mask & (1u << 7)),
+             !!(mask & (1u << 8)), !!(mask & (1u << 5)));
 }
 
 esp_rtc_handle_t sip_service_start(const char *uri)
@@ -175,6 +221,15 @@ esp_rtc_handle_t sip_service_start_mode(const char *uri, bool video)
     atomic_store(&s_video_active, false);
     atomic_store(&s_audio_active, false);
     s_video_sequence = 0;
+    atomic_store(&s_video_callbacks, 0);
+    atomic_store(&s_video_frames, 0);
+    atomic_store(&s_video_bytes, 0);
+    atomic_store(&s_video_busy, 0);
+    atomic_store(&s_video_duplicate, 0);
+    atomic_store(&s_video_oversize, 0);
+    atomic_store(&s_video_failed, 0);
+    atomic_store(&s_video_headers_seen, false);
+    atomic_store(&s_video_nal_mask, 0);
     static esp_rtc_video_info_t video_info = {
         .vcodec = RTC_VCODEC_H264,
         .width = CAMERA_H_RES,

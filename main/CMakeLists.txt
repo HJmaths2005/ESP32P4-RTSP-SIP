@@ -42,7 +42,7 @@ idf_component_register(SRCS
 
 # if(CONFIG_APP_USE_H264)
 # Compatibility fix for FU-A SDP in the prebuilt ADF RTSP server.
-#   target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf")
+#   target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf,--wrap=snprintf,-u,__wrap_snprintf")
 # endif()
 
 # The standalone protocol component owns both headers and the prebuilt library.
@@ -52,4 +52,4 @@ if(CONFIG_MEDIA_PROTOCOL_LIB_ENABLE)
 endif()
 
 # Advertise FU-A packetization and send-only camera video in SIP SDP.
-target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf")
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=media_lib_asprintf,-u,__wrap_media_lib_asprintf,--wrap=snprintf,-u,__wrap_snprintf")

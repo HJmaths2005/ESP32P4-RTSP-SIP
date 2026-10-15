@@ -38,7 +38,8 @@ camera video, without depending on how a peer handles a video offer.
 
 The video SDP advertises `packetization-mode=1` for fragmented H.264 NAL units
 and `sendonly` for the camera. The exact prebuilt-library format is matched in
-`rtsp_sdp_compat.c`; audio SDP passes through unchanged. After any protocol library
+`rtsp_sdp_compat.c`. SIP 0.6.1 uses the `snprintf` wrapper; the separate
+`media_lib_asprintf` wrapper handles RTSP. Audio SDP passes through unchanged. After any protocol library
 upgrade, recheck this match against the generated SDP before relying on it.
 
 ## Build and Asterisk requirements
@@ -91,3 +92,38 @@ Required board checks:
 
 A successful firmware build and host tests do not establish live RTP delivery,
 remote decoding, board UI behavior or Asterisk compatibility.
+
+## Diagnosing a call with no picture
+
+The initial video build contained an SDP-hook error: it intercepted
+`media_lib_asprintf`, while the SDK's SIP `_sip_get_sdp_data` uses `snprintf`.
+The hook being present in the ELF did not establish that SIP called it. The
+corrected build wraps the actual SIP call site and tests `snprintf` formatting,
+including its length-counting and truncation behavior. Inspect the *outgoing*
+INVITE to verify the added `fmtp` and `sendonly` attributes are really present.
+
+The SDK expects `esp_rtc_call(handle, "101")`, not a complete
+`"101@server:5060"` address: it appends the configured server. Passing a full
+address produced a malformed request URI with the server repeated twice.
+
+During a video call, the monitor now prints approximately one-second samples:
+
+- `active`: the SDK emitted VIDEO_SESSION_BEGIN.
+- `callbacks`: the SDK requested camera data.
+- `supplied` / `bytes`: complete frames/bytes given to the RTP library. These
+  counters do **not** establish that UDP packets reached Asterisk or Linphone.
+- `busy`: the encoder held the publication mutex, so the timer callback skipped
+  the frame instead of blocking.
+- `no-new`: no newer published frame was available.
+- `oversize` / `failed`: bounded-copy or other frame-copy failures.
+- `SPS` / `PPS` / `IDR`: NAL types found in the first supplied Annex-B frame.
+
+If Asterisk accepts a nonzero video port and the SDK emits VIDEO_SESSION_BEGIN,
+video is accepted on the ESP-to-Asterisk SIP leg. Check supplied-frame counters,
+then RTP delivery/forwarding and Linphone decoding; that acceptance alone does
+not establish media delivery on the Asterisk-to-Linphone leg.
+
+No `fmtp` line means H.264 packetization mode 0 by default. This can work for
+peers using single-NAL packets; it does not describe our SDK's FU-A fragmentation,
+which requires packetization mode 1. Missing `fmtp` alone does not prove the
+cause of every black-picture call.
